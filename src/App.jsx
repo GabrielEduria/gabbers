@@ -5,8 +5,15 @@ import Landing from './components/Landing.jsx'
 import InvoiceApp from './components/InvoiceApp.jsx'
 import SignIn from './components/SignIn.jsx'
 import Footer from './components/Footer.jsx'
-import { auth } from './firebase.js'
 import ErrorPage from './components/ErrorPage.jsx'
+import { auth } from './firebase.js'
+
+const ROUTES = ['/', '/signin', '/signup', '/dashboard']
+
+const cleanPath = () => {
+  const p = location.pathname.replace(/\/+$/, '') || '/'
+  return p === '/index.html' ? '/' : p
+}
 
 const toUser = (u) =>
   u
@@ -19,12 +26,23 @@ const toUser = (u) =>
     : null
 
 export default function App() {
-  const [view, setView] = useState(() => (location.hash === '#app' ? 'app' : 'home'))
+  const [path, setPath] = useState(cleanPath)
   const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'light')
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(!auth)
-  const [authMode, setAuthMode] = useState('signin')
-  const isNotFound = !['/', '/index.html'].includes(location.pathname)
+
+  const navigate = (to, replace = false) => {
+    if (replace) history.replaceState(null, '', to)
+    else if (to !== cleanPath()) history.pushState(null, '', to)
+    setPath(to)
+  }
+
+  // Back and forward buttons
+  useEffect(() => {
+    const onPop = () => setPath(cleanPath())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -33,9 +51,8 @@ export default function App() {
   }, [theme])
 
   useEffect(() => {
-    history.replaceState(null, '', view === 'app' ? '#app' : location.pathname)
     window.scrollTo({ top: 0 })
-  }, [view])
+  }, [path])
 
   useEffect(() => {
     if (!auth) return
@@ -45,12 +62,20 @@ export default function App() {
     })
   }, [])
 
-  const goSignIn = () => { setAuthMode('signin'); setView('app') }
-  const goSignUp = () => { setAuthMode('signup'); setView('app') }
+  // Signed-in people skip the auth screens, signed-out people can't see the dashboard
+  useEffect(() => {
+    if (!authReady) return
+    if (user && (path === '/signin' || path === '/signup')) navigate('/dashboard', true)
+    if (!user && path === '/dashboard') navigate('/signin', true)
+  }, [authReady, user, path])
+
+  const isNotFound = !ROUTES.includes(path)
+  const view = path === '/' || isNotFound ? 'home' : 'app'
+  const authMode = path === '/signup' ? 'signup' : 'signin'
 
   const signOut = async () => {
+    navigate('/')
     if (auth) await fbSignOut(auth)
-    setView('home')
   }
 
   const resendVerification = async () => {
@@ -64,27 +89,33 @@ export default function App() {
   }
 
   let body
-
-  if(isNotFound) {
+  if (isNotFound) {
     body = (
       <ErrorPage
         title="This page does not exist."
-        message="The page your are looking for cannot be found. It may have been removed or the URL is incorrect."
-        onAction={() => window.location.assign('/')}
+        message="The page you are looking for cannot be found. It may have been removed or the URL is incorrect."
+        onAction={() => navigate('/')}
       />
     )
-  } else if (view === 'home') {
-    body = <Landing onStart={user ? () => setView('app') : goSignUp} />
+  } else if (path === '/') {
+    body = <Landing onStart={() => navigate(user ? '/dashboard' : '/signup')} />
   } else if (!authReady) {
     body = <div className="min-h-[60vh]" />
   } else if (!user) {
-    body = <SignIn inline initialMode={authMode} onModeChange={setAuthMode} onClose={() => setView('home')} />
+    body = (
+      <SignIn
+        inline
+        initialMode={authMode}
+        onModeChange={(m) => navigate(m === 'signup' ? '/signup' : '/signin')}
+        onClose={() => navigate('/')}
+      />
+    )
   } else {
     body = (
       <InvoiceApp
         key={user.uid}
         user={user}
-        onRequireSignIn={goSignIn}
+        onRequireSignIn={() => navigate('/signin')}
         onResendVerification={resendVerification}
         onRefreshUser={refreshUser}
       />
@@ -96,13 +127,13 @@ export default function App() {
       <div className="page-bg" />
       <Navbar
         view={view}
-        setView={setView}
+        setView={(v) => navigate(v === 'home' ? '/' : '/dashboard')}
         theme={theme}
         toggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
         user={user}
         authMode={authMode}
-        onSignIn={goSignIn}
-        onSignUp={goSignUp}
+        onSignIn={() => navigate('/signin')}
+        onSignUp={() => navigate('/signup')}
         onSignOut={signOut}
       />
       {body}
